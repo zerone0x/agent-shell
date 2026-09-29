@@ -31,7 +31,7 @@
 (require 'subr-x)
 
 (declare-function agent-shell "agent-shell")
-(declare-function agent-shell--dot-subdir "agent-shell")
+(declare-function agent-shell--ensure-gitignore "agent-shell")
 
 ;; Word lists for generating random worktree names (Docker-style naming)
 (defconst agent-shell-worktree--adjectives
@@ -104,6 +104,29 @@ Or nil if not in a repo."
       (unless (string-empty-p trimmed)
         trimmed))))
 
+(defun agent-shell-worktree--main-repo-root ()
+  "Return the main repository root for the current git repository.
+When called from a linked worktree, return the root of the repository that owns
+the common git directory instead of the linked worktree root."
+  (when-let* ((repo-root (agent-shell-worktree--git-repo-root))
+              (default-directory repo-root)
+              (output (shell-command-to-string
+                       "git rev-parse --path-format=absolute --git-common-dir 2>/dev/null"))
+              (common-dir (string-trim output))
+              ((not (string-empty-p common-dir))))
+    (if (equal (file-name-nondirectory (directory-file-name common-dir)) ".git")
+        (file-name-directory (directory-file-name common-dir))
+      repo-root)))
+
+(defun agent-shell-worktree--worktrees-dir ()
+  "Return the directory where `agent-shell' git worktrees are created."
+  (when-let* ((repo-root (agent-shell-worktree--main-repo-root))
+              (dir (expand-file-name ".agent-shell/worktrees" repo-root)))
+    (unless (file-directory-p dir)
+      (make-directory dir t)
+      (agent-shell--ensure-gitignore repo-root))
+    dir))
+
 ;;;###autoload
 (defun agent-shell-new-worktree-shell ()
   "Create a new git worktree and start an agent shell in it.
@@ -115,7 +138,7 @@ The user is prompted to confirm or edit the worktree path before creation."
   (interactive)
   (unless (agent-shell-worktree--git-repo-root)
     (user-error "Not in a git repository"))
-  (let* ((worktrees-dir (agent-shell--dot-subdir "worktrees"))
+  (let* ((worktrees-dir (agent-shell-worktree--worktrees-dir))
          (worktree-name (agent-shell-worktree--generate-name))
          (default-path (file-name-concat worktrees-dir worktree-name))
          (worktree-path (expand-file-name (read-directory-name

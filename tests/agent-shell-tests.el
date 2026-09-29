@@ -2,6 +2,7 @@
 
 (require 'ert)
 (require 'agent-shell)
+(require 'agent-shell-worktree)
 (require 'subr-x)
 
 ;;; Code:
@@ -4297,6 +4298,37 @@ other unknown ones."
                          (insert-file-contents exclude-file)
                          (count-matches (regexp-quote "/.agent-shell/")
                                         (point-min) (point-max))))))
+      (delete-directory temp-dir t))))
+
+;;; Tests for agent-shell-worktree
+
+(ert-deftest agent-shell-worktree--worktrees-dir-uses-main-repo-from-worktree-test ()
+  "Test worktree creation directory resolves under the main repo from a worktree."
+  (let* ((temp-dir (make-temp-file "agent-shell-worktree-test" t))
+         (repo-dir (expand-file-name "repo" temp-dir))
+         (linked-dir (expand-file-name "linked" temp-dir))
+         (expected-dir (expand-file-name ".agent-shell/worktrees" repo-dir))
+         (ensure-gitignore-called-with nil))
+    (unwind-protect
+        (let ((default-directory temp-dir))
+          (make-directory repo-dir t)
+          (let ((default-directory repo-dir))
+            (process-file "git" nil nil nil "init")
+            (process-file "git" nil nil nil "config" "user.name" "agent-shell-test")
+            (process-file "git" nil nil nil "config" "user.email" "agent-shell-test@example.com")
+            (write-region "test\n" nil (expand-file-name "README" repo-dir) nil 'no-message)
+            (process-file "git" nil nil nil "add" "README")
+            (process-file "git" nil nil nil "commit" "-m" "Initial commit")
+            (process-file "git" nil nil nil "worktree" "add" linked-dir))
+          (let ((default-directory linked-dir))
+            (cl-letf (((symbol-function 'agent-shell--ensure-gitignore)
+                       (lambda (project-root)
+                         (setq ensure-gitignore-called-with project-root))))
+              (should (equal (agent-shell-worktree--worktrees-dir) expected-dir))
+              (should (file-directory-p expected-dir))
+              (should (equal ensure-gitignore-called-with repo-dir))
+              (should-not (file-directory-p
+                           (expand-file-name ".agent-shell/worktrees" linked-dir))))))
       (delete-directory temp-dir t))))
 
 (ert-deftest agent-shell--on-request-calls-permission-request-handler-test ()
